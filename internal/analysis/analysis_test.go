@@ -1,6 +1,10 @@
 package analysis
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Skufu/Clinical-AI-Assistant/internal/audit"
+)
 
 func TestAnalyze_EDAmlodipineInteraction(t *testing.T) {
 	input := Intake{
@@ -164,8 +168,7 @@ func TestAnalyze_AuditAndSchema(t *testing.T) {
 }
 
 func TestLatestAuditsLimit(t *testing.T) {
-	// reset audit log
-	auditLog = nil
+	SetAuditStore(audit.NewMemoryStore())
 
 	input := Intake{
 		PatientName: "Audit",
@@ -180,13 +183,9 @@ func TestLatestAuditsLimit(t *testing.T) {
 		Analyze(input)
 	}
 
-	if len(auditLog) > auditLimit {
-		t.Fatalf("audit log exceeded limit: %d > %d", len(auditLog), auditLimit)
-	}
-
-	audits := LatestAudits(auditLimit)
-	if len(audits) != auditLimit {
-		t.Fatalf("expected %d audits returned, got %d", auditLimit, len(audits))
+	audits := LatestAudits(50)
+	if len(audits) != 50 {
+		t.Fatalf("expected 50 audits returned, got %d", len(audits))
 	}
 }
 func TestAnalyze_Validation(t *testing.T) {

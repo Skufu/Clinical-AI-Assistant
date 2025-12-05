@@ -45,6 +45,33 @@
             padding: 24px;
         }
 
+        .top-nav {
+            background: #0f172a;
+            color: white;
+            box-shadow: var(--shadow);
+        }
+
+        .nav-content {
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 12px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+        }
+
+        .nav-link {
+            color: #e2e8f0;
+            text-decoration: none;
+        }
+
+        .nav-link:hover {
+            color: white;
+        }
+
         .header {
             background: var(--color-primary);
             color: white;
@@ -409,6 +436,12 @@
     </style>
 </head>
 <body>
+    <div class="top-nav">
+        <div class="nav-content">
+            <span>Clinical AI Assistant</span>
+            <a class="nav-link" href="/">← Back to landing</a>
+        </div>
+    </div>
     <div class="container">
         <div class="header">
             <h1>🏥 Clinical AI Assistant</h1>
@@ -428,6 +461,11 @@
                     <label class="form-label">Patient Name</label>
                     <input type="text" class="form-input" id="patientName" placeholder="Juan Dela Cruz">
                     <div class="error-text" data-error-for="patientName"></div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Clinician ID (for audit trail)</label>
+                    <input type="text" class="form-input" id="userId" placeholder="demo-clinician">
                 </div>
 
                 <div class="form-row">
@@ -671,6 +709,7 @@
 
         function prefillSample() {
             document.getElementById('patientName').value = 'Juan Dela Cruz';
+            document.getElementById('userId').value = 'demo-clinician';
             document.getElementById('age').value = '45';
             document.getElementById('weight').value = '78';
             document.getElementById('height').value = '175';
@@ -693,6 +732,7 @@
 
         function prefillHighRisk() {
             document.getElementById('patientName').value = 'Maria Santos';
+            document.getElementById('userId').value = 'demo-clinician';
             document.getElementById('age').value = '68';
             document.getElementById('weight').value = '90';
             document.getElementById('height').value = '165';
@@ -779,6 +819,7 @@
 
             return {
                 patientName: document.getElementById('patientName').value.trim(),
+                userId: (document.getElementById('userId').value || 'demo-clinician').trim(),
                 age: Number(document.getElementById('age').value) || 0,
                 weight: parseFloat(document.getElementById('weight').value) || 0,
                 height: parseFloat(document.getElementById('height').value) || 0,
@@ -963,6 +1004,7 @@
 
         function startOver() {
             document.getElementById('patientName').value = '';
+            document.getElementById('userId').value = 'demo-clinician';
             document.getElementById('age').value = '';
             document.getElementById('weight').value = '';
             document.getElementById('height').value = '';

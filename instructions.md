@@ -68,3 +68,11 @@ You don’t need a complex backend; the LLM can handle most of the medical logic
 UX guidelines:
 Show red/orange/green risk indicators.
 Make the "why" behind recommendations easy to see (short rationales).
+
+Hackathon optimizations (fast, safe, minimal)
+- No auth layer; use a lightweight user identifier passed through requests for audit and approvals.
+- Persist audit logs to SQLite (file-backed) with timestamps and reviewer ids; fail approval if persistence fails.
+- Keep external dependencies optional: prefer a bundled drug interaction/contra ruleset with optional API enrichment plus caching/backoff.
+- Share the JSON Schema contract with the frontend; validate LLM responses both server- and client-side, and fall back to deterministic checks on invalid output.
+- Use a single LLM client with stub fallback; keep system prompt packed with dosing/contra/interaction rules.
+- Enforce wizard flow: Intake → AI analysis → Doctor review/edit → Final summary; show risks and rationales inline with approvals logged.

@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
+	"github.com/Skufu/Clinical-AI-Assistant/internal/audit"
 	"github.com/xeipuuv/gojsonschema"
 )
 
@@ -26,6 +26,7 @@ type Intake struct {
 	Alcohol     string       `json:"alcohol"`
 	Exercise    string       `json:"exercise"`
 	Complaint   string       `json:"complaint"`
+	UserID      string       `json:"userId,omitempty"`
 }
 
 type Medication struct {
@@ -71,6 +72,14 @@ type Response struct {
 
 //go:embed schema/response.schema.json
 var responseSchema []byte
+
+var auditStore audit.Store = audit.NewMemoryStore()
+
+func SetAuditStore(store audit.Store) {
+	if store != nil {
+		auditStore = store
+	}
+}
 
 var systemPrompt = `
 You are a clinical decision support assistant. Apply conservative, guideline-informed rules:
@@ -300,8 +309,6 @@ func Analyze(in Intake) Response {
 		alts = []Alternative{}
 	}
 
-	auditID, auditAt := recordAudit(in, riskLevel, riskScore)
-
 	resp := Response{
 		RiskLevel:       riskLevel,
 		RiskScore:       riskScore,
@@ -310,8 +317,13 @@ func Analyze(in Intake) Response {
 		PlanConfidence:  planConfidence,
 		Alternatives:    alts,
 		ComputedBMI:     bmi,
-		AuditID:         auditID,
-		AuditAt:         auditAt,
+	}
+
+	if auditID, auditAt, err := recordAudit(in, riskLevel, riskScore); err != nil {
+		resp.ValidationErrors = append(resp.ValidationErrors, "failed to persist audit log")
+	} else {
+		resp.AuditID = auditID
+		resp.AuditAt = auditAt
 	}
 
 	if verrs := ValidateResponse(resp); len(verrs) > 0 {
@@ -654,38 +666,27 @@ func ValidateResponse(resp Response) []string {
 	return out
 }
 
-type auditEntry struct {
-	ID         string
-	PatientRef string
-	Complaint  string
-	RiskLevel  string
-	RiskScore  int
-	At         time.Time
-}
-
-var auditLog []auditEntry
-
-const auditLimit = 50
-
-func recordAudit(in Intake, risk string, score int) (string, string) {
-	id := fmt.Sprintf("audit-%d", time.Now().UnixNano())
-	ref := strings.TrimSpace(in.PatientName)
-	if len(ref) > 2 {
-		ref = ref[:1] + "***"
-	}
-	entry := auditEntry{
-		ID:         id,
+func recordAudit(in Intake, risk string, score int) (string, string, error) {
+	ref := patientRef(in.PatientName)
+	sum, err := auditStore.Insert(audit.Entry{
 		PatientRef: ref,
 		Complaint:  in.Complaint,
 		RiskLevel:  risk,
 		RiskScore:  score,
-		At:         time.Now(),
+		UserID:     in.UserID,
+	})
+	if err != nil {
+		return "", "", err
 	}
-	auditLog = append(auditLog, entry)
-	if len(auditLog) > auditLimit {
-		auditLog = auditLog[len(auditLog)-auditLimit:]
+	return sum.AuditID, sum.At, nil
+}
+
+func patientRef(name string) string {
+	ref := strings.TrimSpace(name)
+	if len(ref) > 2 {
+		return ref[:1] + "***"
 	}
-	return id, entry.At.UTC().Format(time.RFC3339)
+	return ref
 }
 
 type AuditSummary struct {
@@ -698,23 +699,19 @@ type AuditSummary struct {
 }
 
 func LatestAudits(limit int) []AuditSummary {
-	if limit <= 0 || limit > auditLimit {
-		limit = 10
+	summaries, err := auditStore.Latest(limit)
+	if err != nil {
+		return []AuditSummary{}
 	}
-	n := len(auditLog)
-	start := n - limit
-	if start < 0 {
-		start = 0
-	}
-	out := make([]AuditSummary, 0, n-start)
-	for _, a := range auditLog[start:] {
+	out := make([]AuditSummary, 0, len(summaries))
+	for _, a := range summaries {
 		out = append(out, AuditSummary{
-			AuditID:    a.ID,
+			AuditID:    a.AuditID,
 			PatientRef: a.PatientRef,
 			Complaint:  a.Complaint,
 			RiskLevel:  a.RiskLevel,
 			RiskScore:  a.RiskScore,
-			At:         a.At.UTC().Format(time.RFC3339),
+			At:         a.At,
 		})
 	}
 	return out

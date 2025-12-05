@@ -5,6 +5,7 @@ Vanilla HTML/CSS UI plus a Go backend that runs deterministic clinical safety ch
 ## Run
 - `go run main.go` (serves UI and API at http://localhost:8080)
 - `make run`
+- SQLite audit log is created automatically at `SQLITE_PATH` (default `./audit.db`).
 
 ## Test
 - `go test ./...`
@@ -55,6 +56,7 @@ Vanilla HTML/CSS UI plus a Go backend that runs deterministic clinical safety ch
 - Response is validated against `internal/analysis/schema/response.schema.json` before returning.
 - LLM guardrail: deterministic rules merged with a stubbed LLM confidence scorer; swap `callLLMStub` for a real LLM client (system prompt in `analysis.go`) if keys are available.
 - Wizard flow includes a doctor review/edit step and shows audit ID in the approval summary.
+- Audit logging persists to SQLite when available; if persistence fails, the API returns a validation error and the UI blocks approval. A lightweight `userId` from the intake form is stored with each audit row.
 - Docker: `docker build -t clinical-ai .` then `docker run -p 8080:8080 clinical-ai`.
 
 ## LLM integration (how to replace the stub)
@@ -71,6 +73,7 @@ Vanilla HTML/CSS UI plus a Go backend that runs deterministic clinical safety ch
 OPENAI_API_KEY=sk-...
 OPENAI_BASE_URL=https://api.openai.com/v1  # optional override
 PORT=8080
+SQLITE_PATH=./audit.db
 ```
 
 ## Safety measures
