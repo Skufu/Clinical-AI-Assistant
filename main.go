@@ -17,8 +17,24 @@ func main() {
 		log.Fatalf("failed to resolve working directory: %v", err)
 	}
 
+	assetsDir := filepath.Join(baseDir, "assets")
+	http.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(assetsDir))))
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Serve the single-page HTML from the project root.
+		// Serve the marketing landing at root.
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		http.ServeFile(w, r, filepath.Join(baseDir, "landing.html"))
+	})
+
+	http.HandleFunc("/landing", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filepath.Join(baseDir, "landing.html"))
+	})
+
+	http.HandleFunc("/app", func(w http.ResponseWriter, r *http.Request) {
+		// Serve the clinical assistant UI at /app.
 		http.ServeFile(w, r, filepath.Join(baseDir, "index (3).html"))
 	})
 
