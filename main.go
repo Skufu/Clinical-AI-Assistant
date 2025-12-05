@@ -22,6 +22,20 @@ func main() {
 		http.ServeFile(w, r, filepath.Join(baseDir, "index (3).html"))
 	})
 
+	http.HandleFunc("/api/audit", func(w http.ResponseWriter, r *http.Request) {
+		addCORS(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(analysis.LatestAudits(10))
+	})
+
 	http.HandleFunc("/api/analyze", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
 			addCORS(w)
@@ -43,12 +57,28 @@ func main() {
 		}
 
 		resp := analysis.Analyze(req)
+		if len(resp.ValidationErrors) > 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error":   "validation_failed",
+				"details": resp.ValidationErrors,
+			})
+			return
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			http.Error(w, "failed to encode response", http.StatusInternalServerError)
 			return
 		}
+
+		// Minimal audit logging (redacted name).
+		ref := req.PatientName
+		if len(ref) > 2 {
+			ref = ref[:1] + "***"
+		}
+		log.Printf("analysis audit_id=%s patient=%s complaint=%s risk=%s score=%d", resp.AuditID, ref, req.Complaint, resp.RiskLevel, resp.RiskScore)
 	})
 
 	addr := ":8080"

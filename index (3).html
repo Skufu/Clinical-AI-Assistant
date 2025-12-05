@@ -200,6 +200,16 @@
             text-decoration: underline;
         }
 
+        .error-text {
+            color: var(--color-danger);
+            font-size: 12px;
+            margin-top: 4px;
+        }
+
+        .input-error {
+            border-color: var(--color-danger);
+        }
+
         .loading {
             text-align: center;
             padding: 60px 20px;
@@ -412,24 +422,29 @@
                 <p style="color: var(--color-text-secondary); margin-bottom: 24px; font-size: 14px;">Complete patient intake for AI analysis</p>
 
                 <button class="btn-link" onclick="prefillSample()" style="margin-bottom: 20px;">📋 Load Sample Patient (45yo male, HTN, ED)</button>
+                <button class="btn-link" onclick="prefillHighRisk()" style="margin-bottom: 20px; margin-left: 8px;">🚨 Load High-Risk Sample (CAD + Nitrates)</button>
 
                 <div class="form-group">
                     <label class="form-label">Patient Name</label>
                     <input type="text" class="form-input" id="patientName" placeholder="Juan Dela Cruz">
+                    <div class="error-text" data-error-for="patientName"></div>
                 </div>
 
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label">Age</label>
                         <input type="number" class="form-input" id="age" placeholder="45">
+                        <div class="error-text" data-error-for="age"></div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Weight (kg)</label>
                         <input type="number" class="form-input" id="weight" placeholder="78">
+                        <div class="error-text" data-error-for="weight"></div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Height (cm)</label>
                         <input type="number" class="form-input" id="height" placeholder="175">
+                        <div class="error-text" data-error-for="height"></div>
                     </div>
                 </div>
 
@@ -437,6 +452,7 @@
                     <div class="form-group">
                         <label class="form-label">Blood Pressure</label>
                         <input type="text" class="form-input" id="bp" placeholder="135/88">
+                        <div class="error-text" data-error-for="bp"></div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">BMI (auto-calculated)</label>
@@ -518,9 +534,10 @@
                         <option value="Weight Loss">Weight Loss</option>
                         <option value="Other">Other</option>
                     </select>
+                    <div class="error-text" data-error-for="complaint"></div>
                 </div>
 
-                <button class="btn btn-primary" onclick="analyzePatient()">🤖 Analyze Patient & Generate Plan</button>
+                <button id="analyzeBtn" class="btn btn-primary" onclick="analyzePatient()">🤖 Analyze Patient & Generate Plan</button>
             </div>
         </div>
 
@@ -536,7 +553,8 @@
 
             <div class="card" id="errorCard" style="display: none;">
                 <h3>❗ Analysis Error</h3>
-                <p id="errorText" style="color: var(--color-danger); margin: 8px 0 16px;"></p>
+                <p id="errorText" style="color: var(--color-danger); margin: 8px 0 8px;"></p>
+                <ul id="errorList" style="color: var(--color-danger); padding-left: 18px; margin-bottom: 12px;"></ul>
                 <button class="btn btn-secondary" onclick="showSection('intake')">← Back to Patient Intake</button>
             </div>
 
@@ -547,6 +565,7 @@
                     <div class="risk-title">LOW RISK</div>
                     <div class="risk-score">Risk Score: 3/10 • Patient suitable for treatment</div>
                 </div>
+                <p id="auditMeta" style="text-align: center; color: var(--color-text-secondary); margin-bottom: 12px; font-size: 13px;"></p>
 
                 <!-- Flagged Issues -->
                 <div class="card issues-card">
@@ -569,17 +588,49 @@
 
                 <!-- Actions -->
                 <div class="btn-group">
-                    <button class="btn btn-primary" onclick="approvePlan()">✓ Approve Plan & Send to Pharmacy</button>
+                    <button class="btn btn-primary" onclick="goToReview()">→ Proceed to Doctor Review</button>
                     <button class="btn btn-secondary" onclick="showSection('intake')">← Back to Patient Intake</button>
                 </div>
             </div>
         </div>
 
-        <!-- SECTION 3: Approval Confirmation -->
+        <!-- SECTION 3: Doctor Review/Edit -->
+        <div id="review" class="section">
+            <div class="card">
+                <h3 style="margin-bottom: 12px;">Doctor Review & Edit</h3>
+                <p style="color: var(--color-text-secondary); margin-bottom: 16px;">Adjust the recommended plan before approval.</p>
+                <div class="form-group">
+                    <label class="form-label">Medication</label>
+                    <input type="text" class="form-input" id="reviewMedication">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Dosage</label>
+                    <input type="text" class="form-input" id="reviewDosage">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Frequency</label>
+                    <input type="text" class="form-input" id="reviewFrequency">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Duration</label>
+                    <input type="text" class="form-input" id="reviewDuration">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Clinical Rationale</label>
+                    <textarea class="form-input" id="reviewRationale" rows="3"></textarea>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="finalizeReview()">✓ Finalize & Approve</button>
+                    <button class="btn btn-secondary" onclick="showSection('analysis')">← Back to AI Results</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 4: Approval Confirmation -->
         <div id="approved" class="section">
             <div class="card success-msg">
                 <h3>✓ Treatment Plan Approved</h3>
-                <p>Prescription sent to pharmacy • Patient notified • Audit log updated</p>
+                <p id="approvalSummary">Prescription sent to pharmacy • Patient notified • Audit log updated</p>
             </div>
             <button class="btn btn-primary" onclick="startOver()">Start New Patient Analysis</button>
         </div>
@@ -587,6 +638,8 @@
 
     <script>
         const API_URL = '/api/analyze';
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const analyzeDefaultLabel = analyzeBtn.textContent;
 
         document.getElementById('weight').addEventListener('input', calculateBMI);
         document.getElementById('height').addEventListener('input', calculateBMI);
@@ -638,10 +691,79 @@
             calculateBMI();
         }
 
+        function prefillHighRisk() {
+            document.getElementById('patientName').value = 'Maria Santos';
+            document.getElementById('age').value = '68';
+            document.getElementById('weight').value = '90';
+            document.getElementById('height').value = '165';
+            document.getElementById('bp').value = '168/102';
+            document.getElementById('allergies').value = 'Sulfa';
+            document.getElementById('smoking').value = 'Current';
+            document.getElementById('alcohol').value = 'Moderate';
+            document.getElementById('exercise').value = 'None';
+            document.getElementById('complaint').value = 'ED';
+            
+            document.querySelectorAll('#conditions input').forEach(cb => cb.checked = false);
+            document.querySelector('#conditions input[value=\"Heart Disease\"]').checked = true;
+            document.querySelector('#conditions input[value=\"Hypertension\"]').checked = true;
+            
+            const medEntry = document.querySelector('.medication-entry');
+            medEntry.querySelector('.med-name').value = 'Nitroglycerin';
+            medEntry.querySelector('.med-dose').value = '0.4mg';
+            medEntry.querySelector('.med-freq').value = 'As needed';
+            
+            calculateBMI();
+        }
+
         function showSection(sectionId) {
             document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
             document.getElementById(sectionId).classList.add('active');
             window.scrollTo(0, 0);
+        }
+
+        function clearErrors() {
+            document.querySelectorAll('.error-text').forEach(el => el.textContent = '');
+            document.querySelectorAll('.form-input').forEach(el => el.classList.remove('input-error'));
+        }
+
+        function setFieldError(fieldId, message) {
+            const input = document.getElementById(fieldId);
+            if (input) input.classList.add('input-error');
+            const slot = document.querySelector(`[data-error-for="${fieldId}"]`);
+            if (slot) slot.textContent = message;
+        }
+
+        function validateForm(data) {
+            clearErrors();
+            const errors = [];
+            const bpPattern = /^\s*\d{2,3}\s*\/\s*\d{2,3}\s*$/;
+
+            if (!data.patientName) {
+                errors.push('Patient name is required.');
+                setFieldError('patientName', 'Required');
+            }
+            if (!data.age || data.age <= 0) {
+                errors.push('Age must be greater than 0.');
+                setFieldError('age', 'Enter valid age');
+            }
+            if (!data.weight || data.weight <= 0) {
+                errors.push('Weight must be greater than 0.');
+                setFieldError('weight', 'Enter valid weight');
+            }
+            if (!data.height || data.height <= 0) {
+                errors.push('Height must be greater than 0.');
+                setFieldError('height', 'Enter valid height');
+            }
+            if (!data.bp || !bpPattern.test(data.bp)) {
+                errors.push('Blood pressure must be in ##/## format.');
+                setFieldError('bp', 'Format e.g. 120/80');
+            }
+            if (!data.complaint) {
+                errors.push('Chief complaint is required.');
+                setFieldError('complaint', 'Select a complaint');
+            }
+
+            return { valid: errors.length === 0, errors };
         }
 
         function getFormData() {
@@ -673,21 +795,33 @@
         }
 
         function analyzePatient() {
+            const payload = getFormData();
+            const validation = validateForm(payload);
+            if (!validation.valid) {
+                const firstError = document.querySelector('.input-error');
+                if (firstError) firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
+
             showSection('analysis');
             document.getElementById('loading').style.display = 'block';
             document.getElementById('results').style.display = 'none';
             document.getElementById('errorCard').style.display = 'none';
-
-            const payload = getFormData();
+            setAnalyzing(true);
 
             fetch(API_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             })
-            .then(resp => {
-                if (!resp.ok) throw new Error('Server returned ' + resp.status);
-                return resp.json();
+            .then(async resp => {
+                const data = await resp.json().catch(() => null);
+                if (!resp.ok) {
+                    const message = (data && data.error) ? data.error : `Server returned ${resp.status}`;
+                    const details = (data && data.details) ? data.details : [];
+                    throw { message, details };
+                }
+                return data;
             })
             .then(data => {
                 document.getElementById('loading').style.display = 'none';
@@ -696,16 +830,27 @@
                 if (data.computedBmi) {
                     document.getElementById('bmi').value = data.computedBmi.toFixed(1);
                 }
+                setAnalyzing(false);
             })
             .catch(err => {
                 document.getElementById('loading').style.display = 'none';
-                showError(`Unable to analyze patient: ${err.message}`);
+                const details = err && err.details ? err.details : [];
+                const msg = err && err.message ? err.message : 'Unable to analyze patient.';
+                showError(msg, details);
+                setAnalyzing(false);
             });
         }
 
-        function showError(message) {
+        function setAnalyzing(isLoading) {
+            analyzeBtn.disabled = isLoading;
+            analyzeBtn.textContent = isLoading ? 'Analyzing...' : analyzeDefaultLabel;
+        }
+
+        function showError(message, details = []) {
             const card = document.getElementById('errorCard');
             document.getElementById('errorText').textContent = message;
+            const list = document.getElementById('errorList');
+            list.innerHTML = details.map(d => `<li>${d}</li>`).join('');
             card.style.display = 'block';
             document.getElementById('results').style.display = 'none';
         }
@@ -724,12 +869,16 @@
             banner.querySelector('.risk-icon').textContent = icons[riskClass];
             banner.querySelector('.risk-title').textContent = `${data.riskLevel} RISK`;
             banner.querySelector('.risk-score').textContent = `Risk Score: ${data.riskScore} • ${suitability}`;
+            document.getElementById('auditMeta').textContent = data.auditId
+                ? `Audit ID: ${data.auditId}${data.auditAt ? ' • ' + data.auditAt : ''}`
+                : '';
 
             const issuesList = document.getElementById('issuesList');
-            if (!data.flaggedIssues || data.flaggedIssues.length === 0) {
+            const issues = Array.isArray(data.flaggedIssues) ? data.flaggedIssues : [];
+            if (issues.length === 0) {
                 issuesList.innerHTML = '<p style="color: var(--color-success);">✓ No critical issues detected</p>';
             } else {
-                issuesList.innerHTML = data.flaggedIssues.map(issue => {
+                issuesList.innerHTML = issues.map(issue => {
                     const icons = { danger: '🔴', warning: '🟠', info: '🔵' };
                     const labels = { danger: 'SEVERE', warning: 'MODERATE', info: 'INFO' };
                     return `
@@ -744,38 +893,71 @@
                 }).join('');
             }
 
-            const plan = data.recommendedPlan;
+            const plan = data.recommendedPlan || {};
             document.getElementById('treatmentPlan').innerHTML = `
                 <div class="treatment-row">
                     <span class="treatment-label">Medication</span>
-                    <span class="treatment-value">${plan.medication}</span>
+                    <span class="treatment-value">${plan.medication || '—'}</span>
                 </div>
                 <div class="treatment-row">
                     <span class="treatment-label">Dosage</span>
-                    <span class="treatment-value">${plan.dosage}</span>
+                    <span class="treatment-value">${plan.dosage || '—'}</span>
                 </div>
                 <div class="treatment-row">
                     <span class="treatment-label">Frequency</span>
-                    <span class="treatment-value">${plan.frequency}</span>
+                    <span class="treatment-value">${plan.frequency || '—'}</span>
                 </div>
                 <div class="treatment-row">
                     <span class="treatment-label">Duration</span>
-                    <span class="treatment-value">${plan.duration}</span>
+                    <span class="treatment-value">${plan.duration || '—'}</span>
                 </div>
             `;
             
-            document.getElementById('rationale').innerHTML = `<strong>Clinical Rationale:</strong><br>${plan.rationale}`;
+            document.getElementById('rationale').innerHTML = `<strong>Clinical Rationale:</strong><br>${plan.rationale || '—'}<br><br><strong>Confidence:</strong> ${data.planConfidence ? (data.planConfidence * 100).toFixed(0) + '%' : '—'}`;
 
-            document.getElementById('alternatives').innerHTML = data.alternatives.map(alt => `
-                <div class="alternative-item">
-                    <div class="alt-name">${alt.medication}</div>
-                    <div class="alt-pros">✓ Pros: ${alt.pros.join(' • ')}</div>
-                    <div class="alt-cons">✗ Cons: ${alt.cons.join(' • ')}</div>
-                </div>
-            `).join('');
+            const alternatives = Array.isArray(data.alternatives) ? data.alternatives : [];
+            document.getElementById('alternatives').innerHTML = alternatives.length === 0
+                ? '<p style="color: var(--color-text-secondary);">No alternatives provided.</p>'
+                : alternatives.map(alt => `
+                    <div class="alternative-item">
+                        <div class="alt-name">${alt.medication}</div>
+                        <div class="alt-pros">✓ Pros: ${alt.pros.join(' • ')}</div>
+                        <div class="alt-cons">✗ Cons: ${alt.cons.join(' • ')}</div>
+                        <div style="margin-top: 6px; color: var(--color-text-secondary); font-size: 13px;">Confidence: ${alt.confidence ? (alt.confidence * 100).toFixed(0) + '%' : '—'}</div>
+                    </div>
+                `).join('');
+
+            window.__lastResults = data;
         }
 
         function approvePlan() {
+            showSection('approved');
+        }
+
+        function goToReview() {
+            if (!window.__lastResults) {
+                showSection('analysis');
+                return;
+            }
+            const plan = window.__lastResults.recommendedPlan || {};
+            document.getElementById('reviewMedication').value = plan.medication || '';
+            document.getElementById('reviewDosage').value = plan.dosage || '';
+            document.getElementById('reviewFrequency').value = plan.frequency || '';
+            document.getElementById('reviewDuration').value = plan.duration || '';
+            document.getElementById('reviewRationale').value = plan.rationale || '';
+            showSection('review');
+        }
+
+        function finalizeReview() {
+            const summary = [
+                `Medication: ${document.getElementById('reviewMedication').value || '—'}`,
+                `Dosage: ${document.getElementById('reviewDosage').value || '—'}`,
+                `Frequency: ${document.getElementById('reviewFrequency').value || '—'}`,
+                `Duration: ${document.getElementById('reviewDuration').value || '—'}`,
+                `Rationale: ${document.getElementById('reviewRationale').value || '—'}`,
+                window.__lastResults && window.__lastResults.auditId ? `Audit ID: ${window.__lastResults.auditId}` : ''
+            ].filter(Boolean).join(' • ');
+            document.getElementById('approvalSummary').textContent = summary;
             showSection('approved');
         }
 
@@ -800,6 +982,8 @@
                 </div>
             `;
             showSection('intake');
+            clearErrors();
+            setAnalyzing(false);
         }
     </script>
 </body>

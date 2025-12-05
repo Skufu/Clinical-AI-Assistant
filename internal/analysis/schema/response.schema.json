@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ClinicalAIResponse",
+  "type": "object",
+  "required": ["riskLevel", "riskScore", "recommendedPlan", "alternatives"],
+  "properties": {
+    "riskLevel": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "INVALID"] },
+    "riskScore": { "type": "integer", "minimum": 0 },
+    "flaggedIssues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "severity", "description"],
+        "properties": {
+          "type": { "type": "string" },
+          "severity": { "type": "string", "enum": ["danger", "warning", "info"] },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "recommendedPlan": {
+      "type": "object",
+      "required": ["medication", "dosage", "frequency", "duration", "rationale"],
+      "properties": {
+        "medication": { "type": "string" },
+        "dosage": { "type": "string" },
+        "frequency": { "type": "string" },
+        "duration": { "type": "string" },
+        "rationale": { "type": "string" }
+      }
+    },
+    "planConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "alternatives": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["medication", "dosage", "pros", "cons"],
+        "properties": {
+          "medication": { "type": "string" },
+          "dosage": { "type": "string" },
+          "pros": { "type": "array", "items": { "type": "string" } },
+          "cons": { "type": "array", "items": { "type": "string" } },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "computedBmi": { "type": "number", "minimum": 0 },
+    "validationErrors": { "type": "array", "items": { "type": "string" } },
+    "auditId": { "type": "string" },
+    "auditAt": { "type": "string", "format": "date-time" }
+  }
+}
+

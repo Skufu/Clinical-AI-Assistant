@@ -1,10 +1,15 @@
 package analysis
 
 import (
+	_ "embed"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/xeipuuv/gojsonschema"
 )
 
 type Intake struct {
@@ -48,18 +53,49 @@ type Alternative struct {
 	Dosage     string   `json:"dosage"`
 	Pros       []string `json:"pros"`
 	Cons       []string `json:"cons"`
+	Confidence float64  `json:"confidence,omitempty"`
 }
 
 type Response struct {
-	RiskLevel       string        `json:"riskLevel"`
-	RiskScore       int           `json:"riskScore"`
-	FlaggedIssues   []Issue       `json:"flaggedIssues"`
-	RecommendedPlan Plan          `json:"recommendedPlan"`
-	Alternatives    []Alternative `json:"alternatives"`
-	ComputedBMI     float64       `json:"computedBmi"`
+	RiskLevel        string        `json:"riskLevel"`
+	RiskScore        int           `json:"riskScore"`
+	FlaggedIssues    []Issue       `json:"flaggedIssues"`
+	RecommendedPlan  Plan          `json:"recommendedPlan"`
+	PlanConfidence   float64       `json:"planConfidence,omitempty"`
+	Alternatives     []Alternative `json:"alternatives"`
+	ComputedBMI      float64       `json:"computedBmi"`
+	ValidationErrors []string      `json:"validationErrors,omitempty"`
+	AuditID          string        `json:"auditId,omitempty"`
+	AuditAt          string        `json:"auditAt,omitempty"`
 }
 
+//go:embed schema/response.schema.json
+var responseSchema []byte
+
+var systemPrompt = `
+You are a clinical decision support assistant. Apply conservative, guideline-informed rules:
+- Flag contraindications: nitrates + PDE5 inhibitors, uncontrolled hypertension (>160/100), severe hepatic/renal disease with dose adjustments, cardiac clearance for sexual activity in CAD/heart disease.
+- Flag interactions: amlodipine + PDE5 (hypotension), tamsulosin + PDE5 (hypotension), alcohol + PDE5 (hypotension/dizziness).
+- Check dosing: PDE5 starting doses 5-10mg (tadalafil) or 25-50mg (sildenafil); warn >20mg tadalafil single dose.
+- Consider comorbidities: BMI >27 elevated risk; BMI >=30 obesity. Diabetes, hypertension, heart/kidney/liver disease increase risk.
+- Always include rationale and alternatives with pros/cons and confidence 0-1.
+- Safety > everything: prefer flagging potential risks.
+Return structured JSON per schema: riskLevel, riskScore, flaggedIssues, recommendedPlan, planConfidence, alternatives, computedBmi, auditId, validationErrors (if any).
+`
+
 func Analyze(in Intake) Response {
+	if errs := Validate(in); len(errs) > 0 {
+		return Response{
+			RiskLevel:        "INVALID",
+			RiskScore:        0,
+			FlaggedIssues:    nil,
+			RecommendedPlan:  Plan{},
+			Alternatives:     nil,
+			ComputedBMI:      0,
+			ValidationErrors: errs,
+		}
+	}
+
 	var issues []Issue
 	riskScore := 1 // start with a small baseline
 
@@ -194,6 +230,15 @@ func Analyze(in Intake) Response {
 		})
 	}
 
+	if usesPDE5(plan.Medication) && meds["tamsulosin"] {
+		riskScore++
+		issues = append(issues, Issue{
+			Type:        "drug_interaction",
+			Severity:    "warning",
+			Description: "PDE5 inhibitor plus tamsulosin may increase hypotension risk. Consider spacing doses and monitoring.",
+		})
+	}
+
 	if usesPDE5(plan.Medication) && cond["heart disease"] {
 		issues = append(issues, Issue{
 			Type:        "cardiac_clearance",
@@ -202,16 +247,120 @@ func Analyze(in Intake) Response {
 		})
 	}
 
+	if usesPDE5(plan.Medication) && strings.EqualFold(in.Alcohol, "heavy") {
+		issues = append(issues, Issue{
+			Type:        "alcohol",
+			Severity:    "info",
+			Description: "Heavy alcohol use with PDE5 inhibitors can worsen hypotension and dizziness. Counsel moderation.",
+		})
+	}
+
+	// Additional interaction datasource checks (local ruleset).
+	issues = append(issues, interactionIssues(meds)...)
+
+	// Allergy cross-checks against plan and alternatives.
+	if allergy := intersectsAllergy(in.Allergies, plan.Medication); allergy != "" {
+		riskScore += 3
+		issues = append(issues, Issue{
+			Type:        "allergy",
+			Severity:    "danger",
+			Description: fmt.Sprintf("Allergy match detected for planned medication (%s).", allergy),
+		})
+	}
+
+	for _, alt := range alts {
+		if allergy := intersectsAllergy(in.Allergies, alt.Medication); allergy != "" {
+			issues = append(issues, Issue{
+				Type:        "allergy",
+				Severity:    "warning",
+				Description: fmt.Sprintf("Alternative %s conflicts with allergy (%s).", alt.Medication, allergy),
+			})
+		}
+	}
+
+	if exceedsDose(plan.Medication, plan.Dosage) {
+		riskScore += 2
+		issues = append(issues, Issue{
+			Type:        "dose_cap",
+			Severity:    "warning",
+			Description: fmt.Sprintf("Dosage %s for %s may exceed common starting caps. Consider reducing.", plan.Dosage, plan.Medication),
+		})
+	}
+
 	riskLevel := classifyRisk(riskScore)
 
-	return Response{
+	llm := callLLMStub(in, plan, alts)
+	planConfidence := llm.PlanConfidence
+	alts = mergeAltConfidence(alts, llm.AlternativeConf)
+
+	if issues == nil {
+		issues = []Issue{}
+	}
+	if alts == nil {
+		alts = []Alternative{}
+	}
+
+	auditID, auditAt := recordAudit(in, riskLevel, riskScore)
+
+	resp := Response{
 		RiskLevel:       riskLevel,
 		RiskScore:       riskScore,
 		FlaggedIssues:   issues,
 		RecommendedPlan: plan,
+		PlanConfidence:  planConfidence,
 		Alternatives:    alts,
 		ComputedBMI:     bmi,
+		AuditID:         auditID,
+		AuditAt:         auditAt,
 	}
+
+	if verrs := ValidateResponse(resp); len(verrs) > 0 {
+		resp.ValidationErrors = append(resp.ValidationErrors, verrs...)
+	}
+
+	return resp
+}
+
+type llmResult struct {
+	PlanConfidence  float64
+	AlternativeConf []float64
+}
+
+// callLLMStub simulates an LLM scoring step while keeping deterministic guardrails.
+func callLLMStub(in Intake, plan Plan, alts []Alternative) llmResult {
+	// Simple heuristic confidence based on risk and completeness of intake.
+	coverage := 0.6
+	if in.BP != "" {
+		coverage += 0.05
+	}
+	if len(in.Conditions) > 0 {
+		coverage += 0.05
+	}
+	if len(in.Medications) > 0 {
+		coverage += 0.05
+	}
+	if in.Allergies != nil {
+		coverage += 0.05
+	}
+
+	planConfidence := clamp(0.55+coverage*0.3, 0, 0.95)
+	altConf := make([]float64, len(alts))
+	for i := range alts {
+		altConf[i] = clamp(planConfidence-0.05*float64(i+1), 0.4, 0.9)
+	}
+	return llmResult{
+		PlanConfidence:  planConfidence,
+		AlternativeConf: altConf,
+	}
+}
+
+func mergeAltConfidence(alts []Alternative, conf []float64) []Alternative {
+	for i := range alts {
+		if i < len(conf) {
+			alts[i].Confidence = conf[i]
+		}
+	}
+	return alts
 }
 
 type buildPlanContext struct {
@@ -428,4 +577,201 @@ func containsAnyMedication(meds map[string]bool, needles []string) bool {
 		}
 	}
 	return false
+}
+
+func exceedsDose(medication, dose string) bool {
+	// Simple guard: flag PDE5 doses >20mg.
+	if !usesPDE5(medication) {
+		return false
+	}
+	num := extractMg(dose)
+	return num > 20
+}
+
+func extractMg(dose string) float64 {
+	re := regexp.MustCompile(`([\d.]+)\s*mg`)
+	m := re.FindStringSubmatch(strings.ToLower(dose))
+	if len(m) < 2 {
+		return 0
+	}
+	val, _ := strconv.ParseFloat(m[1], 64)
+	return val
+}
+
+func intersectsAllergy(allergies []string, medication string) string {
+	med := strings.ToLower(medication)
+	for _, a := range allergies {
+		if strings.Contains(med, strings.ToLower(strings.TrimSpace(a))) && strings.TrimSpace(a) != "" {
+			return strings.TrimSpace(a)
+		}
+	}
+	return ""
+}
+
+// Validate performs basic intake validation before deeper analysis.
+func Validate(in Intake) []string {
+	var errs []string
+	if strings.TrimSpace(in.PatientName) == "" {
+		errs = append(errs, "patientName is required")
+	}
+	if in.Age <= 0 {
+		errs = append(errs, "age must be greater than 0")
+	}
+	if in.WeightKg <= 0 {
+		errs = append(errs, "weight must be greater than 0")
+	}
+	if in.HeightCm <= 0 {
+		errs = append(errs, "height must be greater than 0")
+	}
+	if strings.TrimSpace(in.BP) == "" {
+		errs = append(errs, "bp is required")
+	}
+	if strings.TrimSpace(in.Complaint) == "" {
+		errs = append(errs, "complaint is required")
+	}
+	return errs
+}
+
+// ValidateResponse ensures responses conform to schema before returning.
+func ValidateResponse(resp Response) []string {
+	body, err := json.Marshal(resp)
+	if err != nil {
+		return []string{"failed to marshal response"}
+	}
+	schemaLoader := gojsonschema.NewBytesLoader(responseSchema)
+	docLoader := gojsonschema.NewBytesLoader(body)
+	result, err := gojsonschema.Validate(schemaLoader, docLoader)
+	if err != nil {
+		return []string{"schema validation error: " + err.Error()}
+	}
+	if result.Valid() {
+		return nil
+	}
+	out := make([]string, 0, len(result.Errors()))
+	for _, e := range result.Errors() {
+		out = append(out, e.String())
+	}
+	return out
+}
+
+type auditEntry struct {
+	ID         string
+	PatientRef string
+	Complaint  string
+	RiskLevel  string
+	RiskScore  int
+	At         time.Time
+}
+
+var auditLog []auditEntry
+
+const auditLimit = 50
+
+func recordAudit(in Intake, risk string, score int) (string, string) {
+	id := fmt.Sprintf("audit-%d", time.Now().UnixNano())
+	ref := strings.TrimSpace(in.PatientName)
+	if len(ref) > 2 {
+		ref = ref[:1] + "***"
+	}
+	entry := auditEntry{
+		ID:         id,
+		PatientRef: ref,
+		Complaint:  in.Complaint,
+		RiskLevel:  risk,
+		RiskScore:  score,
+		At:         time.Now(),
+	}
+	auditLog = append(auditLog, entry)
+	if len(auditLog) > auditLimit {
+		auditLog = auditLog[len(auditLog)-auditLimit:]
+	}
+	return id, entry.At.UTC().Format(time.RFC3339)
+}
+
+type AuditSummary struct {
+	AuditID    string `json:"auditId"`
+	PatientRef string `json:"patientRef"`
+	Complaint  string `json:"complaint"`
+	RiskLevel  string `json:"riskLevel"`
+	RiskScore  int    `json:"riskScore"`
+	At         string `json:"at"`
+}
+
+func LatestAudits(limit int) []AuditSummary {
+	if limit <= 0 || limit > auditLimit {
+		limit = 10
+	}
+	n := len(auditLog)
+	start := n - limit
+	if start < 0 {
+		start = 0
+	}
+	out := make([]AuditSummary, 0, n-start)
+	for _, a := range auditLog[start:] {
+		out = append(out, AuditSummary{
+			AuditID:    a.ID,
+			PatientRef: a.PatientRef,
+			Complaint:  a.Complaint,
+			RiskLevel:  a.RiskLevel,
+			RiskScore:  a.RiskScore,
+			At:         a.At.UTC().Format(time.RFC3339),
+		})
+	}
+	return out
+}
+
+func clamp(val, min, max float64) float64 {
+	if val < min {
+		return min
+	}
+	if val > max {
+		return max
+	}
+	return val
+}
+
+type interactionRule struct {
+	Drug      string
+	With      string
+	Severity  string
+	Desc      string
+	RiskDelta int
+}
+
+var interactionRules = []interactionRule{
+	{
+		Drug:      "amlodipine",
+		With:      "simvastatin",
+		Severity:  "warning",
+		Desc:      "Amlodipine can raise simvastatin levels; consider limiting simvastatin to 20mg/day.",
+		RiskDelta: 1,
+	},
+	{
+		Drug:      "metformin",
+		With:      "contrast",
+		Severity:  "info",
+		Desc:      "Hold metformin around iodinated contrast if eGFR is low to reduce lactic acidosis risk.",
+		RiskDelta: 0,
+	},
+	{
+		Drug:      "finasteride",
+		With:      "pregnancy",
+		Severity:  "warning",
+		Desc:      "Finasteride is teratogenic; avoid handling in pregnancy.",
+		RiskDelta: 1,
+	},
+}
+
+func interactionIssues(meds map[string]bool) []Issue {
+	var out []Issue
+	for _, rule := range interactionRules {
+		if meds[rule.Drug] && meds[rule.With] {
+			out = append(out, Issue{
+				Type:        "drug_interaction",
+				Severity:    rule.Severity,
+				Description: rule.Desc,
+			})
+		}
+	}
+	return out
 }
